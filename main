@@ -1,5 +1,180 @@
 package main
 
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+)
+
+// Calculator структура для калькулятора
+type Calculator struct{}
+
+// Calculate выполняет вычисление
+func (c *Calculator) Calculate(expression string) (float64, error) {
+	// Удаляем пробелы
+	expression = strings.ReplaceAll(expression, " ", "")
+	
+	// Разбираем выражение
+	var num1, num2 float64
+	var operator string
+	
+	// Ищем оператор
+	operators := []string{"+", "-", "*", "/"}
+	for _, op := range operators {
+		if idx := strings.Index(expression, op); idx > 0 && idx < len(expression)-1 {
+			var err error
+			num1, err = strconv.ParseFloat(expression[:idx], 64)
+			if err != nil {
+				return 0, fmt.Errorf("неверное первое число")
+			}
+			
+			num2, err = strconv.ParseFloat(expression[idx+1:], 64)
+			if err != nil {
+				return 0, fmt.Errorf("неверное второе число")
+			}
+			
+			operator = op
+			break
+		}
+	}
+	
+	if operator == "" {
+		return 0, fmt.Errorf("не найдена операция")
+	}
+	
+	// Выполняем операцию
+	switch operator {
+	case "+":
+		return num1 + num2, nil
+	case "-":
+		return num1 - num2, nil
+	case "*":
+		return num1 * num2, nil
+	case "/":
+		if num2 == 0 {
+			return 0, fmt.Errorf("деление на ноль")
+		}
+		return num1 / num2, nil
+	default:
+		return 0, fmt.Errorf("неподдерживаемая операция")
+	}
+}
+
+// Response структура ответа
+type Response struct {
+	Result float64 `json:"result"`
+	Error  string  `json:"error,omitempty"`
+}
+
+// Request структура запроса
+type Request struct {
+	Expression string `json:"expression"`
+}
+
+var calc = &Calculator{}
+
 func main() {
-    println(23)
+	// Статические файлы
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
+	
+	// Главная страница
+	http.HandleFunc("/", homeHandler)
+	
+	// API для вычислений
+	http.HandleFunc("/api/calculate", calculateHandler)
+	
+	// Запуск сервера
+	port := ":8080"
+	fmt.Printf("Калькулятор запущен на http://localhost%s\n", port)
+	log.Fatal(http.ListenAndServe(port, nil))
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+	tmpl := `<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Калькулятор</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="calculator">
+            <h1>Калькулятор</h1>
+            <div class="display">
+                <input type="text" id="result" readonly placeholder="0">
+            </div>
+            <div class="buttons">
+                <button class="btn clear">C</button>
+                <button class="btn operator">/</button>
+                <button class="btn operator">*</button>
+                <button class="btn operator">-</button>
+                
+                <button class="btn number">7</button>
+                <button class="btn number">8</button>
+                <button class="btn number">9</button>
+                <button class="btn operator">+</button>
+                
+                <button class="btn number">4</button>
+                <button class="btn number">5</button>
+                <button class="btn number">6</button>
+                <button class="btn equals">=</button>
+                
+                <button class="btn number">1</button>
+                <button class="btn number">2</button>
+                <button class="btn number">3</button>
+                <button class="btn number zero">0</button>
+                
+                <button class="btn number">.</button>
+            </div>
+        </div>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>`
+	
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, tmpl)
+}
+
+func calculateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	var req Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, "Неверный формат запроса")
+		return
+	}
+	
+	result, err := calc.Calculate(req.Expression)
+	if err != nil {
+		sendError(w, err.Error())
+		return
+	}
+	
+	resp := Response{
+		Result: result,
+	}
+	sendJSON(w, resp)
+}
+
+func sendError(w http.ResponseWriter, message string) {
+	resp := Response{
+		Error: message,
+	}
+	sendJSON(w, resp)
+}
+
+func sendJSON(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(data)
 }
